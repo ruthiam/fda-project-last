@@ -167,7 +167,7 @@ def main():
             else:
                 status_color = "#22c55e"
                 icon = "✅"
-                ew_title = "Market Health: Normal"
+                ew_title = "Market Pulse: Normal"
                 ew_text = f"Market conditions are operating within normal baseline expectations (Z < 1)."
             
             st.markdown(f"""
@@ -414,7 +414,7 @@ def main():
                 naive_mae = sum_abs_naive / count
                 ma_rmse = np.sqrt(sum_sq_ma / count)
                 ma_mae = sum_abs_ma / count
-                winner = "Naive Baseline Wins" if naive_rmse < ma_rmse else "MA Model Wins"
+                winner = "Trust Factor: Naive Baseline is currently more accurate" if naive_rmse < ma_rmse else "Trust Factor: MA Model is currently more accurate"
                 winner_color = "#f59e0b" if naive_rmse < ma_rmse else "#22c55e"
                 
                 # 5-Day Forecast Fan
@@ -423,18 +423,25 @@ def main():
                 future_dates = [last_date + pd.Timedelta(days=i) for i in range(6)]
                 naive_path = [last_vol] * 6
                 ma_path = [last_vol]
-                upper_ma = [last_vol]
-                lower_ma = [last_vol]
+                upper = [last_vol]
+                lower = [last_vol]
                 
                 curr_window = list(valid_arr[-5:])
-                vol_std = np.sqrt(sum_sq_ma / count)
+                vol_std_ma = np.sqrt(sum_sq_ma / count)
+                vol_std_naive = np.sqrt(sum_sq_naive / count)
+                
                 for i in range(1, 6):
-                    pred = np.mean(curr_window)
-                    ma_path.append(pred)
+                    pred_ma = np.mean(curr_window)
+                    ma_path.append(pred_ma)
                     curr_window.pop(0)
-                    curr_window.append(pred)
-                    upper_ma.append(pred + 1.96 * vol_std * np.sqrt(i))
-                    lower_ma.append(max(0, pred - 1.96 * vol_std * np.sqrt(i)))
+                    curr_window.append(pred_ma)
+                    
+                    if naive_rmse < ma_rmse:
+                        upper.append(last_vol + 1.96 * vol_std_naive * np.sqrt(i))
+                        lower.append(max(0, last_vol - 1.96 * vol_std_naive * np.sqrt(i)))
+                    else:
+                        upper.append(pred_ma + 1.96 * vol_std_ma * np.sqrt(i))
+                        lower.append(max(0, pred_ma - 1.96 * vol_std_ma * np.sqrt(i)))
             
             # Rolling Vol
             fig_vol = go.Figure()
@@ -443,12 +450,14 @@ def main():
             if len(valid_arr) > 6:
                 fig_vol.add_trace(go.Scatter(x=future_dates, y=naive_path, name="Naive Forecast", line=dict(color="rgba(255,255,255,0.4)", dash="dot", width=2)))
                 fig_vol.add_trace(go.Scatter(x=future_dates, y=ma_path, name="MA Forecast", line=dict(color="#22d3ee", dash="dash", width=2)))
+                
+                fan_name = "95% Naive Interval" if naive_rmse < ma_rmse else "95% MA Interval"
                 fig_vol.add_trace(go.Scatter(
                     x=future_dates + future_dates[::-1],
-                    y=upper_ma + lower_ma[::-1],
+                    y=upper + lower[::-1],
                     fill="toself", fillcolor="rgba(34, 211, 238, 0.15)",
                     line=dict(color="rgba(255,255,255,0)", width=0),
-                    name="95% MA Interval"
+                    name=fan_name
                 ))
 
             # Dashed Red Line: Mean + 2 sigma
@@ -513,8 +522,12 @@ def main():
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("""
-            ### 1-Day VaR (Value at Risk)
-            Calculated using the historical simulation method directly identifying the 5th percentile quantile score of non-normal historical returns to reflect empirical downside exposure.
+            ### Log Returns & 1-Day VaR (Value at Risk)
+            Log returns are used for statistical properties. VaR is calculated using the historical simulation method directly identifying the 5th percentile quantile score to reflect empirical downside exposure.
+            
+            ```math
+            R_t = \ln(P_t / P_{t-1})
+            ```
             
             ```math
             VaR_{95} = Quantile(R_t, 0.05)

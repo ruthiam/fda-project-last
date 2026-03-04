@@ -155,7 +155,7 @@
                     <div class="flex items-center gap-3">
                         <span id="earlyWarningIcon" class="text-xl"></span>
                         <div>
-                            <h4 class="text-sm font-bold uppercase tracking-widest" id="earlyWarningTitle">Market Health
+                            <h4 class="text-sm font-bold uppercase tracking-widest" id="earlyWarningTitle">Market Pulse
                             </h4>
                             <p id="earlyWarningText" class="text-sm mt-1"></p>
                         </div>
@@ -369,11 +369,13 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8 text-sm text-slate-300">
                     <div class="space-y-4">
                         <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50">
-                            <h3 class="font-bold text-cyan-400 tracking-wider uppercase mb-2">1-Day VaR (Value at Risk)
-                            </h3>
-                            <p class="mb-2">Calculated using the historical simulation method directly identifying the
-                                5th percentile quantile score of non-normal historical returns to reflect empirical
-                                downside exposure.</p>
+                            <h3 class="font-bold text-cyan-400 tracking-wider uppercase mb-2">Log Returns & 1-Day VaR
+                                (Value at Risk)</h3>
+                            <p class="mb-2">Log returns are used for statistical properties. VaR is calculated using the
+                                historical simulation method directly identifying the 5th percentile quantile score to
+                                reflect empirical downside exposure.</p>
+                            <code
+                                class="block bg-slate-950 p-2 rounded text-cyan-200 text-xs mb-2">R_t = ln(P_t / P_{t-1})</code>
                             <code
                                 class="block bg-slate-950 p-2 rounded text-cyan-200 text-xs">VaR_95 = Quantile(R_t, 0.05)</code>
                         </div>
@@ -806,7 +808,7 @@
                     } else {
                         statusColor = "border-[#22c55e] bg-[#22c55e]/10 text-slate-200";
                         icon = "✅";
-                        ewTitle.innerHTML = `<span class="text-[#22c55e]">Market Health: Normal</span>`;
+                        ewTitle.innerHTML = `<span class="text-[#22c55e]">Market Pulse: Normal</span>`;
                         ewText.innerHTML = `Market conditions are operating within normal baseline expectations (Z < 1).`;
                         ewSignal.classList.remove('hidden');
                     }
@@ -1277,7 +1279,7 @@
                         document.getElementById('maRmse').textContent = maRMSE.toFixed(4);
                         document.getElementById('maMae').textContent = maMAE.toFixed(4);
 
-                        const winner = naiveRMSE < maRMSE ? "Naive Baseline Wins" : "MA Model Wins";
+                        const winner = naiveRMSE < maRMSE ? "Trust Factor: Naive Baseline is currently more accurate" : "Trust Factor: MA Model is currently more accurate";
                         document.getElementById('modelWinner').innerHTML = `<span class="${naiveRMSE < maRMSE ? 'text-amber-500' : 'text-emerald-500'}">${winner}</span>`;
 
                         // 5-Day Forward Prediction Fan
@@ -1288,9 +1290,10 @@
                         let currentMAWindow = [];
                         for (let j = 0; j < 5; j++) currentMAWindow.push(trace.y[validIndices[validIndices.length - 1 - j]]);
 
-                        const volStd = Math.sqrt(sumSqMA / count); // proxy standard deviation of residuals
+                        const volStdMA = Math.sqrt(sumSqMA / count); // proxy standard deviation of residuals for MA
+                        const volStdNaive = Math.sqrt(sumSqNaive / count); // proxy standard deviation of residuals for Naive
 
-                        const futureDates = [], naivePath = [], maPath = [], upperMA = [], lowerMA = [];
+                        const futureDates = [], naivePath = [], maPath = [], upper = [], lower = [];
 
                         for (let i = 0; i <= 5; i++) {
                             const fDate = new Date(lastDate + i * 24 * 60 * 60 * 1000);
@@ -1299,23 +1302,33 @@
 
                             if (i === 0) {
                                 maPath.push(lastVol);
-                                upperMA.push(lastVol); lowerMA.push(lastVol);
+                                upper.push(lastVol); lower.push(lastVol);
                             } else {
-                                const pred = currentMAWindow.reduce((a, b) => a + b, 0) / 5;
-                                maPath.push(pred);
-                                currentMAWindow.pop(); currentMAWindow.unshift(pred);
-                                upperMA.push(pred + 1.96 * volStd * Math.sqrt(i));
-                                lowerMA.push(Math.max(0, pred - 1.96 * volStd * Math.sqrt(i))); // vol can't be negative
+                                const predMA = currentMAWindow.reduce((a, b) => a + b, 0) / 5;
+                                maPath.push(predMA);
+                                currentMAWindow.pop(); currentMAWindow.unshift(predMA);
+
+                                // Calculate fan based on the winning model
+                                if (naiveRMSE < maRMSE) {
+                                    upper.push(lastVol + 1.96 * volStdNaive * Math.sqrt(i));
+                                    lower.push(Math.max(0, lastVol - 1.96 * volStdNaive * Math.sqrt(i)));
+                                } else {
+                                    upper.push(predMA + 1.96 * volStdMA * Math.sqrt(i));
+                                    lower.push(Math.max(0, predMA - 1.96 * volStdMA * Math.sqrt(i)));
+                                }
                             }
                         }
 
                         volTraces.push({ x: futureDates, y: naivePath, name: 'Naive Forecast', mode: 'lines', line: { color: 'rgba(255,255,255,0.4)', dash: 'dot', width: 2 } });
                         volTraces.push({ x: futureDates, y: maPath, name: 'MA Forecast', mode: 'lines', line: { color: '#22d3ee', dash: 'dash', width: 2 } });
+
+                        const fanName = naiveRMSE < maRMSE ? '95% Naive Interval' : '95% MA Interval';
+
                         volTraces.push({
                             x: [...futureDates, ...futureDates.slice().reverse()],
-                            y: [...upperMA, ...lowerMA.slice().reverse()],
+                            y: [...upper, ...lower.slice().reverse()],
                             fill: 'toself', fillcolor: 'rgba(34, 211, 238, 0.15)', line: { color: 'transparent' },
-                            name: '95% MA Interval', type: 'scatter', showlegend: true
+                            name: fanName, type: 'scatter', showlegend: true
                         });
                     }
                 }
