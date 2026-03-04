@@ -151,6 +151,36 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Task 3 & 5: Early Warning System & "So What?" Summary
+            vol_trend = "Increasing" if current_vol > hist_mean_vol else "Stable"
+            if z_score_vol > 2:
+                status_color = "#ef4444"
+                icon = "🚨"
+                ew_title = "High Risk Regime (Fat Tails Detected)"
+                ew_text = f"**Warning:** Predicted Volatility is **{vol_trend}** (Z > 2).<br>**Recommendation:** Check diversification strategies. Capital protection is advised."
+            elif z_score_vol > 1:
+                status_color = "#f59e0b"
+                icon = "⚠️"
+                ew_title = "Elevated Volatility"
+                ew_text = f"**Warning:** Predicted Volatility is **{vol_trend}** (1 < Z < 2).<br>**Recommendation:** Check diversification strategies."
+            else:
+                status_color = "#22c55e"
+                icon = "✅"
+                ew_title = "Market Health: Normal"
+                ew_text = f"Market conditions are operating within normal baseline expectations (Z < 1)."
+            
+            st.markdown(f"""
+            <div style="padding: 1rem; border-left: 4px solid {status_color}; background: rgba(30,41,59,0.5); border-radius: 0.5rem; margin-bottom: 1.5rem;">
+                <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+                    <span style="font-size: 1.5rem;">{icon}</span>
+                    <div>
+                        <div style="font-weight: 700; color: {status_color}; text-transform: uppercase; font-size: 0.875rem;">{ew_title}</div>
+                        <div style="font-size: 0.875rem; color: #e2e8f0; margin-top: 0.25rem;">{ew_text}</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
             # --- PREDICTIVE RISK HEADER ---
             c1, c2, c3 = st.columns(3)
@@ -219,12 +249,13 @@ def main():
             st.write("---")
 
     # --- TABS FOR SECTIONS ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Data Quality", 
         "📈 Price & Predictive Models", 
         "📉 Distribution Diagnostics", 
         "🎲 Rolling Risk", 
-        "🔗 Relationships"
+        "🔗 Relationships",
+        "📖 Methodology Appendix"
     ])
 
     # 1. Data Quality
@@ -363,16 +394,91 @@ def main():
             vol_stdev = valid_vols.std()
             vol_threshold = vol_mean + 2 * vol_stdev
             
+            # Tasks 1 & 2: Volatility Prediction & Model Comparison (Naive vs MA)
+            valid_arr = valid_vols.values
+            if len(valid_arr) > 6:
+                sum_sq_naive, sum_abs_naive = 0, 0
+                sum_sq_ma, sum_abs_ma = 0, 0
+                count = 0
+                for k in range(5, len(valid_arr)):
+                    actual = valid_arr[k]
+                    naive_pred = valid_arr[k-1]
+                    ma_pred = np.mean(valid_arr[k-5:k])
+                    sum_sq_naive += (actual - naive_pred)**2
+                    sum_abs_naive += abs(actual - naive_pred)
+                    sum_sq_ma += (actual - ma_pred)**2
+                    sum_abs_ma += abs(actual - ma_pred)
+                    count += 1
+                
+                naive_rmse = np.sqrt(sum_sq_naive / count)
+                naive_mae = sum_abs_naive / count
+                ma_rmse = np.sqrt(sum_sq_ma / count)
+                ma_mae = sum_abs_ma / count
+                winner = "Naive Baseline Wins" if naive_rmse < ma_rmse else "MA Model Wins"
+                winner_color = "#f59e0b" if naive_rmse < ma_rmse else "#22c55e"
+                
+                # 5-Day Forecast Fan
+                last_vol = valid_arr[-1]
+                last_date = valid_vols.index[-1]
+                future_dates = [last_date + pd.Timedelta(days=i) for i in range(6)]
+                naive_path = [last_vol] * 6
+                ma_path = [last_vol]
+                upper_ma = [last_vol]
+                lower_ma = [last_vol]
+                
+                curr_window = list(valid_arr[-5:])
+                vol_std = np.sqrt(sum_sq_ma / count)
+                for i in range(1, 6):
+                    pred = np.mean(curr_window)
+                    ma_path.append(pred)
+                    curr_window.pop(0)
+                    curr_window.append(pred)
+                    upper_ma.append(pred + 1.96 * vol_std * np.sqrt(i))
+                    lower_ma.append(max(0, pred - 1.96 * vol_std * np.sqrt(i)))
+            
             # Rolling Vol
             fig_vol = go.Figure()
             fig_vol.add_trace(go.Scatter(x=r_std.index, y=r_std, name=vol_label, line=dict(color="#0ea5e9", width=2)))
             
+            if len(valid_arr) > 6:
+                fig_vol.add_trace(go.Scatter(x=future_dates, y=naive_path, name="Naive Forecast", line=dict(color="rgba(255,255,255,0.4)", dash="dot", width=2)))
+                fig_vol.add_trace(go.Scatter(x=future_dates, y=ma_path, name="MA Forecast", line=dict(color="#22d3ee", dash="dash", width=2)))
+                fig_vol.add_trace(go.Scatter(
+                    x=future_dates + future_dates[::-1],
+                    y=upper_ma + lower_ma[::-1],
+                    fill="toself", fillcolor="rgba(34, 211, 238, 0.15)",
+                    line=dict(color="rgba(255,255,255,0)", width=0),
+                    name="95% MA Interval"
+                ))
+
             # Dashed Red Line: Mean + 2 sigma
             fig_vol.add_shape(type="line", x0=r_std.index[0], x1=r_std.index[-1], y0=vol_threshold, y1=vol_threshold,
                               line=dict(color="#ef4444", width=2, dash="dash")) # Danger red dashed
             
             fig_vol.update_layout(title=f"Rolling {vol_label} & Warning Threshold (Mean+2σ)", yaxis_title="Volatility")
+            
+            # Display Plot and Metrics
             st.plotly_chart(fig_vol, use_container_width=True)
+            
+            if len(valid_arr) > 6:
+                st.markdown(f"""
+                <div style="background: rgba(30,41,59,0.5); padding: 1rem; border-radius: 0.5rem; border: 1px solid rgba(255,255,255,0.1); margin-top: -1rem; margin-bottom: 2rem;">
+                    <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; font-weight: bold; margin-bottom: 0.5rem; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">Model Performance Metrics (5-Day Predict)</div>
+                    <div style="display: flex; justify-content: space-around;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.7rem; color: #64748b; font-weight: bold; text-transform: uppercase; margin-bottom: 0.25rem;">Naive Baseline</div>
+                            <div style="font-size: 0.8rem; font-family: monospace;">RMSE: <span style="color: #22d3ee;">{naive_rmse:.4f}</span></div>
+                            <div style="font-size: 0.8rem; font-family: monospace;">MAE: &nbsp;<span style="color: #22d3ee;">{naive_mae:.4f}</span></div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.7rem; color: #64748b; font-weight: bold; text-transform: uppercase; margin-bottom: 0.25rem;">MA Model</div>
+                            <div style="font-size: 0.8rem; font-family: monospace;">RMSE: <span style="color: #22d3ee;">{ma_rmse:.4f}</span></div>
+                            <div style="font-size: 0.8rem; font-family: monospace;">MAE: &nbsp;<span style="color: #22d3ee;">{ma_mae:.4f}</span></div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; font-size: 0.75rem; font-weight: bold; color: {winner_color}; margin-top: 0.75rem;">{winner}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
             # Rolling Mean with +/- 2 Std Bands
             fig_mean = go.Figure()
@@ -399,6 +505,45 @@ def main():
             roll_corr = log_returns[pair[0]].rolling(window=corr_window).corr(log_returns[pair[1]])
             fig_roll_corr = px.line(roll_corr, title=f"Rolling {corr_window}-day Correlation: {pair[0]} vs {pair[1]}")
             st.plotly_chart(fig_roll_corr, use_container_width=True)
+
+    # 6. Professional Technical Appendix (Task 4)
+    with tab6:
+        st.header("6. Professional Technical Appendix")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("""
+            ### 1-Day VaR (Value at Risk)
+            Calculated using the historical simulation method directly identifying the 5th percentile quantile score of non-normal historical returns to reflect empirical downside exposure.
+            
+            ```math
+            VaR_{95} = Quantile(R_t, 0.05)
+            ```
+            
+            ### Data Quality & Outliers
+            Missing values were forward-filled or dropped sequentially. Statistical Outliers were identified using a robust Z-score standard identifying events greater than 3 standard deviations from the zero mean.
+            
+            ```math
+            |Z| = \\left| \\frac{x - \\mu_{historical}}{\\sigma_{historical}} \\right| > 3
+            ```
+            """)
+        with c2:
+            st.markdown("""
+            ### Price & Volatility Projections
+            **Price Drift Model:** Forecasted forward geometrically using the compound daily drift mean.
+            
+            ```math
+            E[P_{T+h}] = P_T \cdot \exp(\\mu_{historical} \cdot h)
+            ```
+            
+            **95% Prediction Interval Fan:** Upper and lower bounds mapped across a forward-expanding root-time horizon.
+            
+            ```math
+            Upper/Lower = E[P_{T+h}] \cdot \exp(\\pm 1.96 \cdot \sigma \cdot \sqrt{h})
+            ```
+            
+            **Volatility Naive vs MA Models:** Naive baseline holds constant ($\\hat{\\sigma}_{T+h} = \\sigma_T$) while MA uses a fast 5-day smoothing average to predict changing standard derivations.
+            """)
 
 if __name__ == "__main__":
     if st.runtime.exists():
