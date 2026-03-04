@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Risk Dashboard - Phase 1</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <!-- PapaParse for CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <!-- Simple Statistics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-statistics/7.7.0/simple-statistics.min.js"></script>
+    <style>
+        .glass {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        body {
+            background-color: #f3f4f6;
+        }
+    </style>
+</head>
+
+<body class="p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-10 text-center">
+            <h1 class="text-4xl font-extrabold text-slate-800 mb-2">🛡️ Market Risk Monitoring</h1>
+            <p class="text-slate-500">Phase 1: Exploratory Risk Analysis (Static HTML Version)</p>
+        </header>
+
+        <!-- Uploader Section -->
+        <div class="glass p-8 rounded-2xl shadow-xl mb-10 border-2 border-dashed border-indigo-200 text-center">
+            <h2 class="text-xl font-bold mb-4">Upload Market Data</h2>
+            <p class="text-sm text-slate-500 mb-6 italic">Required columns: Date, Asset, Price (Tidy Format)</p>
+            <input type="file" id="csvFile" accept=".csv"
+                class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer" />
+        </div>
+
+        <!-- Dashboard Content (Hidden until upload) -->
+        <div id="content" class="hidden space-y-10">
+            <!-- Stats Summary -->
+            <div id="summaryCards" class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
+
+            <!-- Plots Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div class="glass p-6 rounded-xl shadow-lg">
+                    <h3 class="font-bold mb-4 text-slate-700">Price Time Series</h3>
+                    <div id="pricePlot" style="height: 400px;"></div>
+                </div>
+                <div class="glass p-6 rounded-xl shadow-lg">
+                    <h3 class="font-bold mb-4 text-slate-700">Daily Log Returns</h3>
+                    <div id="returnPlot" style="height: 400px;"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div class="glass p-6 rounded-xl shadow-lg">
+                    <h3 class="font-bold mb-4 text-slate-700">Return Distribution</h3>
+                    <div id="histPlot" style="height: 400px;"></div>
+                </div>
+                <div class="glass p-6 rounded-xl shadow-lg">
+                    <h3 class="font-bold mb-4 text-slate-700">Correlation Heatmap</h3>
+                    <div id="corrPlot" style="height: 400px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('csvFile');
+        const content = document.getElementById('content');
+
+        fileInput.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: true,
+                dynamicTyping: true,
+                skipEmptyLines: true,
+                complete: function (results) {
+                    processData(results.data);
+                }
+            });
+        };
+
+        function processData(data) {
+            // Group by Asset
+            const assets = {};
+            data.forEach(row => {
+                if (!assets[row.Asset]) assets[row.Asset] = { dates: [], prices: [], returns: [] };
+                assets[row.Asset].dates.push(row.Date);
+                assets[row.Asset].prices.push(row.Price);
+            });
+
+            // Calculate Log Returns
+            Object.keys(assets).forEach(name => {
+                const prices = assets[name].prices;
+                for (let i = 1; i < prices.length; i++) {
+                    const ret = Math.log(prices[i] / prices[i - 1]);
+                    assets[name].returns.push(ret);
+                }
+                // Align dates for returns (remove first date)
+                assets[name].returnDates = assets[name].dates.slice(1);
+            });
+
+            renderDashboard(assets);
+        }
+
+        function renderDashboard(assets) {
+            content.classList.remove('hidden');
+            const assetNames = Object.keys(assets);
+
+            // 1. Price Plot
+            const priceTraces = assetNames.map(name => ({
+                x: assets[name].dates,
+                y: assets[name].prices,
+                name: name,
+                type: 'scatter'
+            }));
+            Plotly.newPlot('pricePlot', priceTraces, { margin: { t: 10 }, hovermode: 'closest' });
+
+            // 2. Return Plot
+            const returnTraces = assetNames.map(name => ({
+                x: assets[name].returnDates,
+                y: assets[name].returns,
+                name: name,
+                type: 'scatter'
+            }));
+            Plotly.newPlot('returnPlot', returnTraces, { margin: { t: 10 } });
+
+            // 3. Histogram (showing first asset as default)
+            const firstName = assetNames[0];
+            Plotly.newPlot('histPlot', [{
+                x: assets[firstName].returns,
+                type: 'histogram',
+                marker: { color: 'rgba(99, 102, 241, 0.7)' },
+                nbinsx: 50
+            }], { title: `Histogram: ${firstName}`, margin: { t: 30 } });
+
+            // 4. Correlation Heatmap
+            // (Simple calculation using only overlapping dates - assuming aligned for now)
+            const corrMatrix = [];
+            assetNames.forEach((a1, i) => {
+                const row = [];
+                assetNames.forEach((a2, j) => {
+                    const r1 = assets[a1].returns;
+                    const r2 = assets[a2].returns;
+                    const minLen = Math.min(r1.length, r2.length);
+                    const corr = ss.sampleCorrelation(r1.slice(0, minLen), r2.slice(0, minLen));
+                    row.push(corr);
+                });
+                corrMatrix.push(row);
+            });
+
+            Plotly.newPlot('corrPlot', [{
+                z: corrMatrix,
+                x: assetNames,
+                y: assetNames,
+                type: 'heatmap',
+                colorscale: 'RdBu',
+                reversescale: true,
+                zmin: -1, zmax: 1
+            }], { margin: { t: 10 } });
+
+            // Stats Cards
+            const cardHtml = assetNames.map(name => `
+                <div class="glass p-6 rounded-xl shadow-md border-b-4 border-indigo-500">
+                    <h4 class="font-bold text-indigo-700">${name}</h4>
+                    <p class="text-2xl font-black mt-2">${assets[name].prices.length} <span class="text-sm font-normal text-slate-500">obs</span></p>
+                    <div class="mt-4 text-sm text-slate-600">
+                        <p>Avg Return: ${(ss.mean(assets[name].returns) * 100).toFixed(4)}%</p>
+                        <p>Volatility: ${(ss.standardDeviation(assets[name].returns) * 100).toFixed(2)}%</p>
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('summaryCards').innerHTML = cardHtml;
+        }
+    </script>
+</body>
+
+</html>

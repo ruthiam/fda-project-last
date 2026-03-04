@@ -1,0 +1,3 @@
+@echo off
+echo Opening Market Risk Dashboard...
+start index.html
